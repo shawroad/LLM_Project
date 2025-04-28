@@ -51,7 +51,8 @@ class Critic(nn.Module):
 
 
 def compute_policy_loss(log_probs, old_log_probs, advantages, action_mask=None, clip_eps=0.2):
-    ratio = (log_probs - old_log_probs).exp()
+    # 这里就是因为重要性采样的原因，可以是的计算一次经验，进行多次更新。 
+    ratio = (log_probs - old_log_probs).exp()   
     surr1 = ratio * advantages
     surr2 = ratio.clamp(1.0 - clip_eps, 1.0 + clip_eps) * advantages
     loss = -torch.min(surr1, surr2)
@@ -62,6 +63,7 @@ def compute_policy_loss(log_probs, old_log_probs, advantages, action_mask=None, 
 
 def compute_value_loss(values, old_values, returns, action_mask=None, clip_eps: float = None):
     if clip_eps is not None:
+        # 预测价值 减去 之前的奖励  然后累加 平方和
         values_clipped = old_values + (values - old_values).clamp(-clip_eps, clip_eps)
         surr1 = (values_clipped - returns) ** 2
         surr2 = (values - returns) ** 2
@@ -183,11 +185,11 @@ def get_advantages_and_returns(
         # gamma：折扣因子，用于权衡未来奖励的重要性
         # lambd：GAE 的平滑参数，用于控制偏差和方差的权衡
         # lastgaelam：存储当前时间步的优势值，初始值为 0。
-        delta = rewards[:, t] + gamma * nextvalues - values[:, t]  # 
-        lastgaelam = delta + gamma * lambd * lastgaelam
+        delta = rewards[:, t] + gamma * nextvalues - values[:, t]  # 这就是价值优势 当前的真实奖励+预期价值-当前预测价值
+        lastgaelam = delta + gamma * lambd * lastgaelam   # gamma衰减，也就是越往前 对后面的价值计算要衰减
         advantages_reversed.append(lastgaelam)
     advantages = torch.stack(advantages_reversed[::-1], dim=1)
-    returns = advantages + values
+    returns = advantages + values   # 价值优势 + 预测价值
     return advantages.detach(), returns
 
 def generate_samples(prompts, model, max_length, max_new_tokens, n_samples_per_prompt, micro_rollout_batch_size):
@@ -231,23 +233,24 @@ def generate_samples(prompts, model, max_length, max_new_tokens, n_samples_per_p
 
 
 def compute_rewards(kl, r, action_mask, kl_ctl, clip_reward_value):
-        kl_divergence_estimate = -kl_ctl * kl
-        rewards = kl_divergence_estimate
+    kl_divergence_estimate = -kl_ctl * kl
+    rewards = kl_divergence_estimate
 
-        # print(action_mask.size())   # torch.Size([2, 50])
-        ends = action_mask.sum(1) + 1
+    # print(action_mask.size())   # torch.Size([2, 50])
+    ends = action_mask.sum(1) + 1
         
-        if not isinstance(clip_reward_value, torch.Tensor):
-            clip_reward_value = torch.tensor(clip_reward_value).to(r.device)
-    
-        # 对奖励模型打的奖励值做了下裁剪
-        reward_clip = torch.clamp(r, -clip_reward_value, clip_reward_value)
-        batch_size = r.size(0)
+    if not isinstance(clip_reward_value, torch.Tensor):
+        clip_reward_value = torch.tensor(clip_reward_value).to(r.device)
 
-        # 然后 计算每一条样本的奖励。
-        for j in range(batch_size):
-            rewards[j, :ends[j]][-1] += reward_clip[j, 0]   # 其实是把奖励模型的值加到kl散度的最后一位。
-        return rewards
+    # 对奖励模型打的奖励值做了下裁剪
+    reward_clip = torch.clamp(r, -clip_reward_value, clip_reward_value)
+    batch_size = r.size(0)
+
+    # 然后 计算每一条样本的奖励。
+    for j in range(batch_size):
+        rewards[j, :ends[j]][-1] += reward_clip[j, 0]   # 其实是把奖励模型的值加到kl散度的最后一位。
+    return rewards
+
 
 def generate_experiences(samples_list):
 
@@ -264,46 +267,47 @@ def generate_experiences(samples_list):
         action_mask = samples.action_mask
         num_actions = samples.num_actions
         with torch.no_grad():
-            # 计算策略模型输出token的概率
+            # 1. 计算策略模型输出token的概率
             output = actor_model(seqs, attention_mask=attention_mask)
-            logits = output.logits
-            # print(logits.size())   # torch.Size([2, 306, 151936])
-
+            logits = output.logits        # print(logits.size())   # torch.Size([2, 306, 151936])
             log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)   # actor模型输出的概率分布
             log_probs_labels = log_probs.gather(dim=-1, index=seqs[:, 1:].unsqueeze(-1))   # 标签
             action_log_probs = log_probs_labels.squeeze(-1)[:, -num_actions:]   # 只看输出部分那块的概率分布
 
-            #计算参考模型输出token的概率
+            # 2. 计算参考模型输出token的概率
             ref_output = ref_model(seqs, attention_mask=attention_mask)
             ref_logits = ref_output.logits
             ref_log_probs = F.log_softmax(ref_logits[:, :-1, :], dim=-1)
             ref_log_probs_labels = ref_log_probs.gather(dim=-1, index=seqs[:, 1:].unsqueeze(-1))
             ref_action_log_probs = ref_log_probs_labels.squeeze(-1)[:, -num_actions:]
 
-            # 计算价值   价值模型把序列扔进去 预测每步的价值
+            # 3. 计算价值模型对每个token的价值预测    价值模型把序列扔进去 预测每步的价值
             value = critic_model.forward(seqs, attention_mask, num_actions).to(device)   
             # print(value.size())   # torch.Size([2, 50])
 
-            # 转换成文本
+            # 转换成文本  这里要转文本的原因 是因为奖励模型是deberta是另外的分词处理逻辑
             seq_texts = actor_tokenizer.batch_decode(seqs, skip_special_tokens=True)
 
-            # 计算奖励模型的奖励值
+            # 4. 计算奖励模型的奖励值
             reward_model_inputs = reward_tokenizer(seq_texts, return_tensors="pt", padding=True)
             r = reward_model(**reward_model_inputs.to(device)).logits # 奖励模型的输出，相当于生成最后一个token的奖励（结果奖励模型）
-            # print(r.size())   # torch.Size([2, 1])
+            # print(r.size())   # torch.Size([2, 1])   # 相当于是对整个序列打的奖励
 
-            # 计算kl散度
+            # 计算kl散度    对actor_model和ref_model算的概率分布 算kl散度
             kl = compute_approx_kl(
                     action_log_probs,
                     ref_action_log_probs,
                     action_mask=action_mask).to(device)
             # print(kl.size())   # torch.Size([2, 50])    每个token都会有actor和ref的输出 然后算kl散度
 
-            # 计算实际奖励    这个只跟actor  ref 以及 reward模型有关系
+            # 计算实际奖励    这个只跟actor_model  ref_model 以及 reward_model模型有关系  
             rewards = compute_rewards(kl, r, action_mask, kl_ctl=0.1, clip_reward_value=0.2)
+            # print(rewards.size())  # torch.Size([2, 50])
 
             # 计算优势和回报   
             advantages, returns = get_advantages_and_returns(value, rewards, action_mask, gamma=0.1, lambd=0.2)
+            # print(advantages.size())  # torch.Size([2, 50])
+            # print(returns.size())   # torch.Size([2, 50])
 
         # actor_model.train()
         # critic_model.train()
@@ -381,13 +385,14 @@ def train_step(experience, steps):
     logits = actor_model(
             sequences,
             attention_mask=attention_mask).logits
-    
+    # print(logits.size())    # torch.Size([4, 306, 151936])
+
     log_probs = F.log_softmax(logits[:, :-1, :], dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=sequences[:, 1:].unsqueeze(-1))
     action_log_probs = log_probs_labels.squeeze(-1)[:, -num_actions:]
-  
-    policy_loss = compute_policy_loss(action_log_probs, old_action_log_probs, advantages, action_mask=action_mask)
 
+    # 获取一次经验，进行多次更新。这里就是因为做了重要性采样
+    policy_loss = compute_policy_loss(action_log_probs, old_action_log_probs, advantages, action_mask=action_mask)
     policy_loss.backward()
     optimizer_actor.step()  
     writer.add_scalar("policy_loss", policy_loss.item(), steps)
@@ -395,6 +400,8 @@ def train_step(experience, steps):
     critic_model.train()
     optimizer_critic.zero_grad()
     values = critic_model.forward(sequences, attention_mask, num_actions)
+    # print(values.size())   # torch.Size([4, 50])
+
     value_loss = compute_value_loss(values, old_values, returns, action_mask)
     value_loss.backward()
     optimizer_critic.step()
@@ -421,14 +428,16 @@ def train():
             buffer.append(experiences)
             dataloader = DataLoader(buffer, batch_size=micro_train_batch_size, shuffle=True, collate_fn=collate_fn)
             torch.cuda.empty_cache()
-            for epoch in range(max_epochs):
+            for epoch in range(max_epochs):  # 采集一次经验，在这里训练多次  训练max_epochs轮
                 for experience in dataloader:
                     train_step(experience, steps)
                     steps += 1
             
             buffer.clear()
-        
             torch.cuda.empty_cache()
+
+    actor_model.save_pretrained("ppo_model_output")
+
             
 
 if __name__ == "__main__":
