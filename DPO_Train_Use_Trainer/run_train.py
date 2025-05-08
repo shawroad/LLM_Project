@@ -35,14 +35,26 @@ def load_data(path):
 
 
 def preprocess_function(examples):
-    inputs = tokenizer(examples["prompt"], padding="max_length", truncation=True, max_length=512, return_tensors="pt")
-    chosen_outputs = tokenizer(examples["chosen"], padding="max_length", truncation=True, max_length=512, return_tensors="pt")
-    rejected_outputs = tokenizer(examples["rejected"], padding="max_length", truncation=True, max_length=512, return_tensors="pt")
+    # 因为DPOTrainer会给每条文本后面加eos_token_id  所以把<|im_end|>可以去掉
+    prompt = [{"role": "user", "content": examples['prompt']}]
+    prompt = tokenizer.apply_chat_template(prompt, tokenize=False)
+    # print(prompt)
+    '''
+    <|im_start|>system
+    You are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>
+    <|im_start|>user
+    今年我想在室内种植水果，你能给我推荐一个容易入手的水果吗？<|im_end|>
+    '''
+    prompt = prompt.rstrip('<|im_end|>\n')
+    # print(tokenizer.eos_token)  # <|im_end|>
+    
+    # 将chosen和rejected 只需要处理成'<|im_start|>assistant\n文本'会将两个文本直接映射为id 相连
+    chosen = "<|im_start|>assistant\n{}".format(examples['chosen'])
+    rejected = "<|im_start|>assistant\n{}".format(examples['rejected'])
     return {
-        "input_ids": inputs["input_ids"],
-        "attention_mask": inputs["attention_mask"],
-        "chosen_ids": chosen_outputs["input_ids"],
-        "rejected_ids": rejected_outputs["input_ids"]
+        "prompt": prompt,
+        'chosen': chosen,
+        'rejected': rejected
     }
 
 
@@ -65,8 +77,9 @@ if __name__ == '__main__':
     train_dataset = Dataset.from_list(train_data)
     eval_dataset = Dataset.from_list(eval_data)
 
-    train_dataset = train_dataset.map(preprocess_function, batched=True)
-    eval_dataset = eval_dataset.map(preprocess_function, batched=True)
+    train_dataset = train_dataset.map(preprocess_function, batched=False)  # 这里的batched=False 是因为实现的preprocess_function函数是单样本处理
+    # print(train_dataset[100])
+    eval_dataset = eval_dataset.map(preprocess_function, batched=False)
 
     training_args = DPOConfig(
         output_dir="DPO_model_output",
@@ -82,7 +95,9 @@ if __name__ == '__main__':
         load_best_model_at_end=True,         # 在训练结束时加载最佳模型
         save_total_limit=2,                  # 最多保存两个检查点
         fp16=True,                           # 使用混合精度训练（需要 GPU）
-        dataloader_num_workers=2           # 数据加载的线程数
+        dataloader_num_workers=2,           # 数据加载的线程数
+        max_prompt_length=200,    # prompt统一padding多长
+        max_completion_length=500   # 回答padding多长
     )
 
     # 初始化 DPOTrainer
