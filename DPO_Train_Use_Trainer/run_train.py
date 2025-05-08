@@ -110,3 +110,59 @@ if __name__ == '__main__':
         processing_class=tokenizer
     )
     trainer.train()
+
+
+
+'''
+{'loss': 1.0619, 'grad_norm': 130.79339599609375, 'learning_rate': 1.9971134159030648e-05, 'rewards/chosen': -1.5285903215408325, 'rewards/rejected': -1.4812065362930298, 'rewards/accuracies': 0.4000000059604645, 'rewards/margins': -0.047383688390254974, 'logps/chosen': -199.06910705566406, 'logps/rejected': -173.42794799804688, 'logits/chosen': -0.24395839869976044, 'logits/rejected': -0.1604161560535431, 'epoch': 0.01}
+
+在使用 DPOTrainer 训练时，每步打印的信息是训练过程中记录的各种指标和状态。这些信息可以帮助你监控训练过程，分析模型的性能和优化状态。以下是每个字段的含义解释：
+字段解释
+loss:
+含义：当前训练步的损失值。
+作用：损失值是优化的目标，通常会随着训练逐步下降。如果损失值异常（如 NaN 或过大），可能需要检查数据或模型的数值稳定性。
+
+grad_norm:
+含义：当前训练步的梯度范数（通常是 L2 范数）。
+作用：梯度范数反映了梯度的大小。如果梯度过大，可能导致梯度爆炸；如果梯度过小，可能导致训练停滞。可以通过梯度裁剪（如 torch.nn.utils.clip_grad_norm_）来控制梯度大小。
+
+learning_rate:
+含义：当前训练步的学习率。
+作用：学习率是优化器的重要参数，控制模型权重更新的步长。如果使用学习率调度器（如 lr_scheduler），学习率可能会动态变化。
+
+rewards/chosen:
+含义：模型对 chosen（被选中的样本）的奖励值。
+作用：奖励值通常由奖励函数计算，用于衡量模型对选中样本的偏好。
+
+rewards/rejected:
+含义：模型对 rejected（被拒绝的样本）的奖励值。
+作用：奖励值用于衡量模型对被拒绝样本的偏好。理想情况下，rewards/chosen 应该高于 rewards/rejected。
+
+rewards/accuracies:
+含义：当前训练步的准确率。
+作用：准确率表示模型在当前训练步中对样本的正确选择比例。通常用于评估模型的性能。
+
+rewards/margins:
+含义：rewards/chosen 和 rewards/rejected 的差值（即奖励的边距）。
+作用：奖励边距反映了模型对 chosen 和 rejected 样本的区分能力。理想情况下，边距应该为正且逐步增大。
+
+logps/chosen:
+含义：chosen 样本的对数概率（log-probability）。
+作用：对数概率是模型对 chosen 样本的预测置信度的对数形式。值越高，表示模型对该样本的预测越自信。
+
+logps/rejected:
+含义：rejected 样本的对数概率。
+作用：与 logps/chosen 类似，但针对被拒绝样本。理想情况下，logps/chosen 应该高于 logps/rejected。
+
+logits/chosen:
+含义：chosen 样本的原始模型输出（logits）。
+作用：logits 是模型在最后一层的原始输出，未经过 softmax 转换。值越高，表示模型对该样本的偏好越强。
+
+logits/rejected:
+含义：rejected 样本的原始模型输出（logits）。
+作用：与 logits/chosen 类似，但针对被拒绝样本。
+
+epoch:
+含义：当前训练的 epoch（轮次）。
+作用：表示训练的进度。epoch 通常是一个小数，表示当前训练步在整个 epoch 中的比例。
+'''
