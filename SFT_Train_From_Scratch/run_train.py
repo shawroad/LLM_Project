@@ -145,7 +145,6 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            optimizer.step()
             print(f"epoch:{epoch}, step: {step}, loss: {loss.item()}")
 
             global_step += 1
