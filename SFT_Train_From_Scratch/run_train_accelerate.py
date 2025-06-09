@@ -1,7 +1,3 @@
-"""
-@file   : run_train.py
-@time   : 2025-04-27
-"""
 import os
 import torch
 import json
@@ -75,6 +71,7 @@ def evaluate_ppl(model, dataloader, loss_function):
 
 if __name__ == '__main__':
     args = set_args()
+    args.output_dir = 'sft_model_output_accelerate'
     set_seed()
 
     # 分词器
@@ -96,7 +93,8 @@ if __name__ == '__main__':
     valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
 
     # model = AutoModelForCausalLM.from_pretrained(args.pretrain_model, quantization_config=bnb_config)
-    model = AutoModelForCausalLM.from_pretrained(args.pretrain_model, device_map='auto')
+        
+    model = AutoModelForCausalLM.from_pretrained(args.pretrain_model, device_map='auto', torch_dtype=torch.bfloat16)  # 这里指定bfloat16 意味着在训练过程中,保存权重时是bfloat16
     # print(model)
     print(f'模型总参数量为：{sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     # 模型总参数量为：1543714304
@@ -112,9 +110,6 @@ if __name__ == '__main__':
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
     # trainable params: 5,046,272 || all params: 7,620,662,784 || trainable%: 0.06621828235983522
-    if torch.cuda.is_available():
-        model.cuda()
-
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     accelerator = Accelerator()   
@@ -153,7 +148,6 @@ if __name__ == '__main__':
             loss_mask = loss_mask.reshape(-1)
 
             loss = loss_function(logits, labels)    
-
             loss = torch.sum(loss * loss_mask) / loss_mask.sum()
 
             # 使用accelerator反向传播
@@ -169,7 +163,7 @@ if __name__ == '__main__':
                 tb_write.add_scalar("train_loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                 logging_loss = tr_loss
 
-            if global_step % 5000 == 0:
+            if global_step % 200 == 0:
                 # 验证集评估
                 valid_ppl = evaluate_ppl(model, valid_dataloader, loss_function)
                 print(f"epoch: {epoch}, valid ppl: {valid_ppl}")
