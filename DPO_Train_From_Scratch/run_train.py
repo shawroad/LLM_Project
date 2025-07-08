@@ -40,39 +40,33 @@ def calc_dpo_loss(params):
     ## 两个模型的chosen输出
     chosen_target_ids=params['chosen_target_ids'][:,1:]
     # print(chosen_target_ids.size())  # torch.Size([2, 299])
+
     pi_chosen_logits=params['pi_chosen_logits'][:,:-1,:]
     # print(pi_chosen_logits.size())   # torch.Size([2, 299, 151936])
-    ref_chosen_logits=params['ref_chosen_logits'][:,:-1,:]
+
+    ref_chosen_logits=params['ref_chosen_logits'][:,:-1,:]   # torch.Size([2, 299, 151936])
     
-    pi_chosen_prob, ref_chosen_prob=dpo_prob_calc(chosen_target_ids, pi_chosen_logits, ref_chosen_logits)
+    pi_chosen_prob, ref_chosen_prob = dpo_prob_calc(chosen_target_ids, pi_chosen_logits, ref_chosen_logits)
+        
+    # pi_chosen_prob: 训练模型的对数概率和的平均值
+    # ref_chosen_prob: 参考模型的对数概率和的平均值
     # print(pi_chosen_prob.size())   # torch.Size([2])
     # print(ref_chosen_prob.size())   # torch.Size([2])
     
     ## 两个模型的reject输出
-    reject_target_ids=params['reject_target_ids'][:,1:]
-    pi_reject_logits=params['pi_reject_logits'][:,:-1,:]
-    ref_reject_logits=params['ref_reject_logits'][:,:-1,:]
-    pi_reject_prob,ref_reject_prob=dpo_prob_calc(reject_target_ids,pi_reject_logits,ref_reject_logits)
+    reject_target_ids = params['reject_target_ids'][:,1:]
+    pi_reject_logits = params['pi_reject_logits'][:,:-1,:]
+    ref_reject_logits = params['ref_reject_logits'][:,:-1,:]
+    pi_reject_prob, ref_reject_prob = dpo_prob_calc(reject_target_ids,pi_reject_logits,ref_reject_logits)
     
-    # 计算DPO Loss
-    pi_prob_diff=pi_chosen_prob-pi_reject_prob 
-    ref_prob_diff=ref_chosen_prob-ref_reject_prob
-
-    beta=0.01
-
-    # 原始写法
-    # loss=-torch.nn.functional.logsigmoid(beta*(pi_prob_diff-ref_prob_diff))
-
-    # AI改法
-    diff = beta * (pi_prob_diff - ref_prob_diff)
-    diff = torch.clamp(diff, min=-50, max=50)  # 避免溢出
-    loss = -torch.nn.functional.logsigmoid(diff)
-
-
-    print(f"pi_prob_diff: {pi_prob_diff}, ref_prob_diff: {ref_prob_diff}")
-    print(f"loss before mean: {loss}")
     
-    return loss.mean()
+    logratios = pi_chosen_prob - pi_reject_prob
+    ref_logratios = ref_chosen_prob - ref_reject_prob
+    logits = logratios - ref_logratios
+    beta = 0.1
+    label_smoothing = 0.01
+    losses = -F.logsigmoid(beta * logits) * (1 - label_smoothing) - F.logsigmoid(-beta * logits) * label_smoothing
+    return losses.mean()
 
 
 def evaluate(test_dataloader):

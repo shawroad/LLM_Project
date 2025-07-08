@@ -9,7 +9,7 @@ def set_args():
     parser.add_argument('--pretrain_model', type=str, default='../../Qwen2.5-1.5B-Instruct', help='预训练模型')
     parser.add_argument('--num_epochs', type=int, default=5, help='训练多少轮')
     parser.add_argument('--batch_size', type=int, default=2, help='训练批次大小')
-    parser.add_argument('--max_len', type=int, default=300, help='最大长度')
+    parser.add_argument('--max_len', type=int, default=500, help='最大长度')
     parser.add_argument('--seed', type=int, default=42, help='随机种子')
     parser.add_argument('--logging_steps', type=int, default=5, help='日志打印步数')
     args = parser.parse_args()
